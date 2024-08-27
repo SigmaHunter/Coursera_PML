@@ -1,0 +1,155 @@
+---
+title: "Course Project"
+author: "Fabricio"
+date: ""
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=TRUE}
+# Cleaning environment for a fresh start!
+rm(list=ls(all=TRUE))
+
+# Loading data sets
+pml_training <- read.csv("/docs/Coursera/practical_ML_jhu/pml-training.csv", 
+                         header = TRUE)
+pml_training$classe <- factor(pml_training$classe)
+
+pml_testing <- read.csv("/docs/Coursera/practical_ML_jhu/pml-testing.csv", 
+                        header = TRUE)
+```
+
+Data inspection (not echoed here for the sake of space) shows the presence of variables filled predominantly with missing data. After visual inspection of the data (there would be ways to automate the process for sure), the following columns will be retained:
+
+- 8:11
+-37:49
+-60:68
+-84:86
+-113:124
+-140
+-151:160
+
+```{r, echo=TRUE}
+pml_training <- pml_training[, c(8:11, 37:49, 60:68, 84:86, 113:124, 140, 151:160)]
+dim(pml_training)
+```
+
+From the original 160 variables, 52 have been retained.
+
+The visual inspection also shows that many of the retained variables apparently contain very similar values across observations, and this variables may therefore have very little variance. I use the `caret` function `nearZeroVar()` to examine the matter.
+
+```{r, echo=TRUE}
+lowVariance <- caret::nearZeroVar(pml_training, saveMetrics = TRUE)
+lowVariance
+```
+
+The results show that the the hypothesis of many variables with small variance is not correct. 
+
+
+Because the training data set provides enough observations, I will split it into three data sets to train, test, and validate the models before applying the final model to the pml_testing data set. Partition will follow the 60/20/20 suggestion presented in one of the lectures
+
+
+```{r, echo=TRUE}
+library(caret)
+inTrain <- createDataPartition(pml_training$classe, p = 0.6, list=FALSE)
+training <- pml_training[inTrain,]
+
+holder_df <- pml_training[-inTrain,]
+
+inTest <- createDataPartition(holder_df$classe, p = 0.5, list=FALSE)
+testing <- holder_df[inTest, ]
+validation <- holder_df[-inTest, ]
+```
+
+
+I will start fitting three different algorithms to the training subsample: Random Forest, Boosting, and Linear Discriminant Analysis.
+
+I will use all available variables to explan/predict `class`. 
+
+
+```{r, echo=TRUE}
+# Adding option parallel processing procedures to speed up analysis
+library(doParallel)
+registerDoParallel(makeCluster(15))
+
+
+# Random forest
+model1rf <- train(classe ~ . , method="rf", 
+                  data=training, 
+                  verbose=FALSE)
+# Boosting
+model2boost <- train(classe ~ . , method="gbm", 
+                     data=training, 
+                     verbose=FALSE)
+# LDA
+model3lda <- train(classe ~ . , method="lda", 
+                   data=training, 
+                   verbose=FALSE)
+```
+
+
+Using trained model for prediction using the testing data set
+
+```{r}
+# Random forest, prediction, testing
+pred1rf <- predict(model1rf, testing)
+# Boosting, prediction, testing
+pred2gbm <- predict(model2boost, testing)
+# LDA, prediction, testing
+pred3lda <- predict(model3lda, testing)
+```
+
+Checking the prediction accuracies using `confusionMatrix`:
+
+```{r}
+# Random forest
+confusionMatrix(pred1rf, testing$class)
+# Boosting
+confusionMatrix(pred2gbm, testing$class)
+# LDA
+confusionMatrix(pred3lda, testing$class)
+```
+
+
+The results from the `confusionMatrix` show that the `random forest` algorithm has a fantastic performance of 0.99 in the testing sample, which is superior to the also very strong `boosting` (0.96) and much superior to `LDA` (0.69).
+
+The strong performance of the `random forest` algorithm makes unnecessary additional steps such as the model stacking strategy. It show is may not even be necessary to refine the model. 
+
+But as we had already set a validation dataset aside, let's use it for a very final inspection of model adequacy.
+
+
+```{r, echo=FALSE}
+predVALrf <- predict(model1rf, validation)
+# Boosting, prediction, testing
+predVALgbm <- predict(model2boost, validation)
+# LDA, prediction, testing
+predVALlda <- predict(model3lda, validation)
+```
+
+Checking the prediction accuracies using `confusionMatrix`:
+
+```{r}
+# Random forest
+confusionMatrix(predVALrf, validation$class)
+# Boosting
+confusionMatrix(predVALgbm, validation$class)
+# LDA
+confusionMatrix(predVALlda, validation$class)
+```
+
+Once again, the `random forest` model presented superior performance relative to the others, with an out-of-sample accuracy of 0.99. 
+The accuracy on the validation data set is as good as for the testing data set, which gives us confidence in the RF model adequacy. 
+
+# Now, the pml_testing
+
+Now it is time to use the `random forest` model to predict the `classe` in the 20-observation `pml_testing` dataset.
+
+```{r}
+predTesting <- predict(model1rf, pml_testing)
+table(predTesting)
+```
+
+Using the RF model for predictions using the pml_testing data set shows that 7 cases were expected/predicted to be in `classe` A, 8 in B, 1 in C, 1 in D, and 3 in E. 
